@@ -64,7 +64,6 @@ node_modules/
 
 # dotenv environment variables file
 .env
-
+functions/upreach-key.json
 # dataconnect generated files
 .dataconnect
-upreach-backend-466407-e5d817328099.json

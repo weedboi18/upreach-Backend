@@ -12,13 +12,13 @@ const app = express();
 app.use(cors());
 app.use(bodyParser.json());
 
-const KEYFILEPATH = './upreach-key.json';
+const KEYFILEPATH = '/etc/secrets/upreach-key.json';
 const SCOPES = ['https://www.googleapis.com/auth/calendar'];
 
 const auth = new google.auth.GoogleAuth({
   keyFile: KEYFILEPATH,
   scopes: SCOPES,
-});
+});S
 
 const calendar = google.calendar({ version: 'v3', auth });
 
