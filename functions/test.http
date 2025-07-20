@@ -1,0 +1,9 @@
+POST http://localhost:3000/book-appointment
+Content-Type: application/json
+
+{
+  "name": "John Doe",
+  "email": "your-email@example.com",
+  "phone": "123456789",
+  "startTime": "2025-07-23T15:00:00-07:00"
+}
