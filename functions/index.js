@@ -12,7 +12,7 @@ const app = express();
 app.use(cors());
 app.use(bodyParser.json());
 
-const KEYFILEPATH = 'D:/Downloads/upreach-backend-466407-e5d817328099.json';
+const KEYFILEPATH = './upreach-key.json';
 const SCOPES = ['https://www.googleapis.com/auth/calendar'];
 
 const auth = new google.auth.GoogleAuth({
