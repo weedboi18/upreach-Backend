@@ -114,10 +114,10 @@ async function book(data, res) {
     location:    `Phone: ${phone||''}`
   };
 
-  if (email && email.includes('@')) {
-    event.attendees    = [{ email }];
-    event.sendUpdates  = 'all';
-  }
+  // if (email && email.includes('@')) {
+  //   event.attendees    = [{ email }];
+  //   event.sendUpdates  = 'all';
+  // }
 
   const inserted = await calendar.events.insert({
     calendarId: CALENDAR_ID,
