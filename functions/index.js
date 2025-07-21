@@ -25,7 +25,7 @@ app.use(cors());
 app.use(bodyParser.json());
 
 app.post('/action', async (req, res) => {
-  const data   = req.body;
+  const data   = req.body;git add .
   const action = (data.action || '').toLowerCase();
 
   try {
