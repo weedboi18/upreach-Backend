@@ -25,7 +25,7 @@ app.use(cors());
 app.use(bodyParser.json());
 
 app.post('/action', async (req, res) => {
-  const data   = req.body;git add .
+  const data   = req.body;
   const action = (data.action || '').toLowerCase();
 
   try {
@@ -45,18 +45,19 @@ app.post('/action', async (req, res) => {
 // Helpers
 //
 function toLocalISOString(date) {
-  // Render’s node runs in UTC; this shifts to your local zone
   const offsetMinutes = date.getTimezoneOffset();
-  const localMs       = date.getTime() - offsetMinutes*60*1000;
-  return new Date(localMs)
-    .toISOString()
-    .replace('Z', () => {
-      const sign = offsetMinutes>0 ? '-' : '+';
-      const abs  = Math.abs(offsetMinutes);
-      const h    = String(Math.floor(abs/60)).padStart(2,'0');
-      const m    = String(abs%60).padStart(2,'0');
-      return `${sign}${h}:${m}`;
-    }());
+  // shift to local time
+  const localMs = date.getTime() - offsetMinutes*60000;
+  // build an ISO string *without* the trailing "Z"
+  const baseIso = new Date(localMs).toISOString().slice(0, -1);
+
+  // build the ±HH:MM offset
+  const sign = offsetMinutes > 0 ? '-' : '+';
+  const abs  = Math.abs(offsetMinutes);
+  const h    = String(Math.floor(abs/60)).padStart(2, '0');
+  const m    = String(abs % 60).padStart(2, '0');
+
+  return `${baseIso}${sign}${h}:${m}`;
 }
 
 //
