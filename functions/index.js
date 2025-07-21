@@ -18,7 +18,7 @@ const SCOPES = ['https://www.googleapis.com/auth/calendar'];
 const auth = new google.auth.GoogleAuth({
   keyFile: KEYFILEPATH,
   scopes: SCOPES,
-});S
+});
 
 const calendar = google.calendar({ version: 'v3', auth });
 
