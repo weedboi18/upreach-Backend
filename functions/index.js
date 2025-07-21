@@ -2,7 +2,7 @@ const { google } = require('googleapis');
 const express    = require('express');
 const bodyParser = require('body-parser');
 const cors       = require('cors');
-
+const { DateTime } = require('luxon');
 const OFFICE_START = 9;    // 9 AM
 const OFFICE_END   = 17;   // 5 PM
 const DURATION_MIN = 60;   // Appointment length (minutes)
@@ -69,14 +69,19 @@ async function book(data, res) {
     return res.json({ status:'error', message:'Missing name or bookingTime' });
   }
 
-  const start = new Date(bookingTime);
-  const end   = new Date(start.getTime() + DURATION_MIN*60000);
+  const tz = 'America/Vancouver'; // <-- Vancouver time zone
 
-  // office‐hours check
-  const h0 = start.getHours(), h1 = end.getHours(), m1 = end.getMinutes();
-  if (h0 < OFFICE_START || h1 > OFFICE_END || (h1===OFFICE_END && m1>0)) {
-    return res.json({ status:'rejected', reason:'outside_office_hours' });
+  const startLux = DateTime.fromISO(bookingTime, { zone: tz });
+  const endLux   = startLux.plus({ minutes: DURATION_MIN });
+
+  const h0 = startLux.hour, h1 = endLux.hour, m1 = endLux.minute;
+  if (h0 < OFFICE_START || h1 > OFFICE_END || (h1 === OFFICE_END && m1 > 0)) {
+    return res.json({ status: 'rejected', reason: 'outside_office_hours' });
   }
+
+  // For Google API, use UTC dates
+  const start = new Date(startLux.toUTC().toISO());
+  const end   = new Date(endLux.toUTC().toISO());
 
   // freebusy on both calendars
   const fb = await calendar.freebusy.query({
