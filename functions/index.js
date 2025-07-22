@@ -106,7 +106,7 @@ async function book(data, res) {
   }
 
   const event = {
-    summary:     `Appointment with ${name}`,
+    summary: `Appointment with (${name})`,
     description: `Email: ${email||'N/A'}\nPhone: ${phone||'N/A'}`,
     start:       { dateTime: start.toISOString() },
     end:         { dateTime: end.toISOString() },
@@ -150,7 +150,7 @@ async function cancel(data, res) {
 
   const lower = name.toLowerCase();
   for (let ev of list.data.items || []) {
-    if (!ev.summary.toLowerCase().includes(lower)) continue;
+    if (!ev.summary.toLowerCase().includes(`(${lower})`)) continue;
     const desc = (ev.description || '').toLowerCase();
     if (email && !desc.includes(email.toLowerCase())) continue;
     if (phone && !desc.includes(phone)) continue;
