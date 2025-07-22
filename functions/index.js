@@ -1,19 +1,24 @@
+// ===============================================
+//  Google Calendar Automation Backend (v2)
+//  Updated to support agent-passed config variables
+// ===============================================
+
 const { google } = require('googleapis');
 const express    = require('express');
 const bodyParser = require('body-parser');
 const cors       = require('cors');
 const { DateTime } = require('luxon');
-const OFFICE_START = 9;    // 9 AM
-const OFFICE_END   = 17;   // 5 PM
-const DURATION_MIN = 60;   // Appointment length (minutes)
-const MAX_OVERLAPS = 5;    // Max simultaneous events
 
-const CALENDAR_ID          = process.env.CALENDAR_ID;
-const BLOCKING_CALENDAR_ID = process.env.BLOCKING_CALENDAR_ID || CALENDAR_ID;
+// Default fallback config (used if not provided by agent)
+const DEFAULTS = {
+  timezone: 'America/Vancouver',
+  officeStart: 9,          // 9 AM
+  officeEnd: 17,           // 5 PM
+  durationMin: 60,         // appointment length (min)
+  maxOverlaps: 5           // max simultaneous events
+};
 
-//
-// — GoogleAuth using the secret file Render mounts at /etc/secrets
-//
+// Google Auth
 const auth = new google.auth.GoogleAuth({
   keyFile: '/etc/secrets/upreach-key.json',
   scopes: ['https://www.googleapis.com/auth/calendar']
@@ -24,6 +29,7 @@ const app = express();
 app.use(cors());
 app.use(bodyParser.json());
 
+// Route entry
 app.post('/action', async (req, res) => {
   const data   = req.body;
   const action = (data.action || '').toLowerCase();
@@ -40,72 +46,65 @@ app.post('/action', async (req, res) => {
   }
 });
 
-
-//
-// Helpers
-//
+// Format UTC date to ISO string with local offset
 function toLocalISOString(date) {
   const offsetMinutes = date.getTimezoneOffset();
-  // shift to local time
   const localMs = date.getTime() - offsetMinutes*60000;
-  // build an ISO string *without* the trailing "Z"
   const baseIso = new Date(localMs).toISOString().slice(0, -1);
-
-  // build the ±HH:MM offset
   const sign = offsetMinutes > 0 ? '-' : '+';
   const abs  = Math.abs(offsetMinutes);
   const h    = String(Math.floor(abs/60)).padStart(2, '0');
   const m    = String(abs % 60).padStart(2, '0');
-
   return `${baseIso}${sign}${h}:${m}`;
 }
 
-//
-// — BOOK
-//
+// BOOK APPOINTMENT
 async function book(data, res) {
-  const { name, email, phone, bookingTime } = data;
-  if (!name || !bookingTime) {
-    return res.json({ status:'error', message:'Missing name or bookingTime' });
+  const { name, email, phone, bookingTime, calendarId, blockingCalendarId, appointmentType } = data;
+  if (!name || !bookingTime || !calendarId) {
+    return res.json({ status:'error', message:'Missing name, calendarId or bookingTime' });
   }
 
-  const tz = 'America/Vancouver'; // <-- Vancouver time zone
+  const timezone    = data.timezone || DEFAULTS.timezone;
+  const officeStart = data.officeStart ?? DEFAULTS.officeStart;
+  const officeEnd   = data.officeEnd ?? DEFAULTS.officeEnd;
+  const durationMin = (data.durationMin || DEFAULTS.durationMin);
+  const maxOverlaps = (data.maxOverlaps || DEFAULTS.maxOverlaps);
 
-  const startLux = DateTime.fromISO(bookingTime, { zone: tz });
-  const endLux   = startLux.plus({ minutes: DURATION_MIN });
+  const blockingId = blockingCalendarId || calendarId;
 
+  const startLux = DateTime.fromISO(bookingTime, { zone: timezone });
+  const endLux   = startLux.plus({ minutes: durationMin });
   const h0 = startLux.hour, h1 = endLux.hour, m1 = endLux.minute;
-  if (h0 < OFFICE_START || h1 > OFFICE_END || (h1 === OFFICE_END && m1 > 0)) {
+
+  if (h0 < officeStart || h1 > officeEnd || (h1 === officeEnd && m1 > 0)) {
     return res.json({ status: 'rejected', reason: 'outside_office_hours' });
   }
 
-  // For Google API, use UTC dates
   const start = new Date(startLux.toUTC().toISO());
   const end   = new Date(endLux.toUTC().toISO());
 
-  // freebusy on both calendars
   const fb = await calendar.freebusy.query({
-    requestBody:{
+    requestBody: {
       timeMin: start.toISOString(),
       timeMax: end.toISOString(),
       items: [
-        { id: CALENDAR_ID },
-        { id: BLOCKING_CALENDAR_ID }
+        { id: calendarId },
+        { id: blockingId }
       ]
     }
   });
 
-  const busyBlock = fb.data.calendars[BLOCKING_CALENDAR_ID]?.busy || [];
-  if (busyBlock.length>0) {
+  const busyBlock = fb.data.calendars[blockingId]?.busy || [];
+  if (busyBlock.length > 0) {
     return res.json({ status:'rejected', reason:'slot_blocked' });
   }
 
-  const busyMain = fb.data.calendars[CALENDAR_ID]?.busy || [];
-  if (busyMain.length >= MAX_OVERLAPS) {
+  const busyMain = fb.data.calendars[calendarId]?.busy || [];
+  if (busyMain.length >= maxOverlaps) {
     return res.json({ status:'rejected', reason:'slot_full' });
   }
 
-  // build event
   const event = {
     summary:     `Appointment with ${name}`,
     description: `Email: ${email||'N/A'}\nPhone: ${phone||'N/A'}`,
@@ -114,66 +113,54 @@ async function book(data, res) {
     location:    `Phone: ${phone||''}`
   };
 
-  // if (email && email.includes('@')) {
-  //   event.attendees    = [{ email }];
-  //   event.sendUpdates  = 'all';
-  // }
-
   const inserted = await calendar.events.insert({
-    calendarId: CALENDAR_ID,
-    resource:   event
+    calendarId,
+    resource: event
   });
 
   return res.json({
-    status:'success',
-    results:{
-      status:'booked',
-      data:{
+    status: 'success',
+    results: {
+      status: 'booked',
+      data: {
         eventId: inserted.data.id,
-        start:   toLocalISOString(start),
-        end:     toLocalISOString(end)
+        start: toLocalISOString(start),
+        end:   toLocalISOString(end)
       }
     }
   });
 }
 
-//
-// — CANCEL
-//
+// CANCEL APPOINTMENT
 async function cancel(data, res) {
-  const { name, email, phone } = data;
-  if (!name || (!email && !phone)) {
-    return res.json({ status:'error', message:'Need name + (email or phone)' });
+  const { name, email, phone, calendarId } = data;
+  if (!name || (!email && !phone) || !calendarId) {
+    return res.json({ status:'error', message:'Missing credentials or calendarId' });
   }
 
-  // next 30 days
-  const now    = new Date(),
-        future = new Date(now.getTime() + 30*24*60*60000);
+  const now = new Date();
+  const future = new Date(now.getTime() + 30*24*60*60000);
 
   const list = await calendar.events.list({
-    calendarId: CALENDAR_ID,
-    timeMin:    now.toISOString(),
-    timeMax:    future.toISOString(),
+    calendarId,
+    timeMin: now.toISOString(),
+    timeMax: future.toISOString(),
     singleEvents: true
   });
 
   const lower = name.toLowerCase();
-  for (let ev of list.data.items||[]) {
+  for (let ev of list.data.items || []) {
     if (!ev.summary.toLowerCase().includes(lower)) continue;
-    const desc = (ev.description||'').toLowerCase();
+    const desc = (ev.description || '').toLowerCase();
     if (email && !desc.includes(email.toLowerCase())) continue;
     if (phone && !desc.includes(phone)) continue;
 
-    // delete it
-    await calendar.events.delete({
-      calendarId: CALENDAR_ID,
-      eventId:    ev.id
-    });
+    await calendar.events.delete({ calendarId, eventId: ev.id });
     return res.json({
-      status:'success',
-      results:{
-        status:'cancelled',
-        data:{ start: toLocalISOString(new Date(ev.start.dateTime)) }
+      status: 'success',
+      results: {
+        status: 'cancelled',
+        data: { start: toLocalISOString(new Date(ev.start.dateTime)) }
       }
     });
   }
@@ -181,44 +168,56 @@ async function cancel(data, res) {
   return res.json({ status:'not_found', message:'No matching appointment' });
 }
 
-//
-// — FIND NEAREST
-//
+// FIND NEAREST SLOT
 async function findNearest(data, res) {
-  const wanted = new Date(data.bookingTime);
-  const slotMs = DURATION_MIN*60000;
-  const step   = 15*60000;
-  const window = 8*60*60000;
+  const { bookingTime, calendarId, blockingCalendarId } = data;
+  if (!calendarId || !bookingTime) {
+    return res.json({ status:'error', message:'Missing calendarId or bookingTime' });
+  }
+
+  const timezone    = data.timezone || DEFAULTS.timezone;
+  const officeStart = data.officeStart ?? DEFAULTS.officeStart;
+  const officeEnd   = data.officeEnd ?? DEFAULTS.officeEnd;
+  const durationMin = data.durationMin || DEFAULTS.durationMin;
+  const maxOverlaps = data.maxOverlaps || DEFAULTS.maxOverlaps;
+  const blockingId  = blockingCalendarId || calendarId;
+
+  const wanted = DateTime.fromISO(bookingTime, { zone: timezone });
+  const slotMs = durationMin * 60000;
+  const step   = 15 * 60000;
+  const window = 8 * 60 * 60000;
 
   let best = null;
 
-  for (let delta=0; delta<=window; delta+=step) {
+  for (let delta = 0; delta <= window; delta += step) {
     for (let dir of [ -1, +1 ]) {
-      const start = new Date(wanted.getTime()+dir*delta);
-      const end   = new Date(start.getTime()+slotMs);
+      const startLux = wanted.plus({ milliseconds: dir * delta });
+      const endLux = startLux.plus({ minutes: durationMin });
+      const h0 = startLux.hour, h1 = endLux.hour, m1 = endLux.minute;
+      if (h0 < officeStart || h1 > officeEnd || (h1 === officeEnd && m1 > 0)) continue;
 
-      const h0=start.getHours(), h1=end.getHours(), m1=end.getMinutes();
-      if (h0<OFFICE_START || h1>OFFICE_END || (h1===OFFICE_END&&m1>0)) continue;
+      const start = new Date(startLux.toUTC().toISO());
+      const end   = new Date(endLux.toUTC().toISO());
 
       const fb = await calendar.freebusy.query({
-        requestBody:{
-          timeMin:start.toISOString(),
-          timeMax:end.toISOString(),
-          items:[{id:BLOCKING_CALENDAR_ID}]
+        requestBody: {
+          timeMin: start.toISOString(),
+          timeMax: end.toISOString(),
+          items: [{ id: blockingId }]
         }
       });
 
-      if ((fb.data.calendars[BLOCKING_CALENDAR_ID]?.busy||[]).length>0) continue;
+      if ((fb.data.calendars[blockingId]?.busy || []).length > 0) continue;
 
       const list = await calendar.events.list({
-        calendarId:    CALENDAR_ID,
-        timeMin:       start.toISOString(),
-        timeMax:       end.toISOString(),
-        singleEvents:  true
+        calendarId,
+        timeMin: start.toISOString(),
+        timeMax: end.toISOString(),
+        singleEvents: true
       });
 
-      if ((list.data.items||[]).length < MAX_OVERLAPS) {
-        best = { start, end, direction: dir>0?'after':'before' };
+      if ((list.data.items || []).length < maxOverlaps) {
+        best = { start, end, direction: dir > 0 ? 'after' : 'before' };
         break;
       }
     }
@@ -230,19 +229,18 @@ async function findNearest(data, res) {
   }
 
   return res.json({
-    status:'success',
-    results:{
-      status:'available',
-      data:{
-        start:     toLocalISOString(best.start),
-        end:       toLocalISOString(best.end),
+    status: 'success',
+    results: {
+      status: 'available',
+      data: {
+        start: toLocalISOString(best.start),
+        end: toLocalISOString(best.end),
         direction: best.direction
       }
     }
   });
 }
 
-
-// start the server
-const PORT = process.env.PORT||3000;
+// Start server
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Listening on ${PORT}`));
