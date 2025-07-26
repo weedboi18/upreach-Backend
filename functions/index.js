@@ -2,7 +2,14 @@
 //  Google Calendar Automation Backend (v2)
 //  Updated to support agent-passed config variables
 // ===============================================
-
+const { createClient } = require('@supabase/supabase-js');
+const businessId = data.business_id; // coming from Synthflow
+if (!businessId) {
+  return res.status(400).json({ status: 'error', message: 'Missing business_id' });
+}
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY; // Use service role for server
+const supabase = createClient(supabaseUrl, supabaseKey);
 const { google } = require('googleapis');
 const express    = require('express');
 const bodyParser = require('body-parser');
@@ -28,6 +35,49 @@ const calendar = google.calendar({ version: 'v3', auth });
 const app = express();
 app.use(cors());
 app.use(bodyParser.json());
+app.post('/onboard', async (req, res) => {
+  const data = req.body;
+
+  const supabase = createClient(
+    process.env.SUPABASE_URL,
+    process.env.SUPABASE_SERVICE_ROLE_KEY
+  );
+
+  // 1. Get the logged-in user from the access token
+  const token = req.headers.authorization?.split('Bearer ')[1];
+  if (!token) {
+    return res.status(401).json({ error: 'Missing auth token' });
+  }
+
+  const { data: userData, error: userError } = await supabase.auth.getUser(token);
+  if (userError || !userData.user) {
+    return res.status(401).json({ error: 'Invalid or expired token' });
+  }
+
+  const uid = userData.user.id;
+
+  // 2. Extract business info from form
+  const { business_id, name, email } = data;
+  if (!business_id || !name || !email) {
+    return res.status(400).json({ error: 'Missing required fields' });
+  }
+
+  // 3. Insert business row
+  const { error: insertError } = await supabase.from('businesses').insert([
+    {
+      id: uid,
+      business_id,
+      name,
+      email,
+    },
+  ]);
+
+  if (insertError) {
+    return res.status(400).json({ error: insertError.message });
+  }
+
+  return res.json({ success: true, uid });
+});
 
 // Route entry
 app.post('/action', async (req, res) => {
@@ -78,7 +128,20 @@ async function book(data, res) {
   const h0 = startLux.hour, h1 = endLux.hour, m1 = endLux.minute;
 
   if (h0 < officeStart || h1 > officeEnd || (h1 === officeEnd && m1 > 0)) {
+    await supabase.from('stats').insert([{
+      business_id: businessId,
+      call_type: 'rejected',
+      phone: data.phone,
+      metadata: {
+        name: data.name,
+        email: data.email,
+        reason: "outside_office_hours"
+      }
+    }]);
+
     return res.json({ status: 'rejected', reason: 'outside_office_hours' });
+    
+
   }
 
   const start = new Date(startLux.toUTC().toISO());
@@ -97,11 +160,32 @@ async function book(data, res) {
 
   const busyBlock = fb.data.calendars[blockingId]?.busy || [];
   if (busyBlock.length > 0) {
+    await supabase.from('stats').insert([{
+      business_id: businessId,
+      call_type: 'rejected',
+      phone: data.phone,
+      metadata: {
+        name: data.name,
+        email: data.email,
+        reason: "slot_blocked"
+      }
+    }]);
     return res.json({ status:'rejected', reason:'slot_blocked' });
   }
 
   const busyMain = fb.data.calendars[calendarId]?.busy || [];
   if (busyMain.length >= maxOverlaps) {
+    if (busyBlock.length > 0) {
+    await supabase.from('stats').insert([{
+      business_id: businessId,
+      call_type: 'rejected',
+      phone: data.phone,
+      metadata: {
+        name: data.name,
+        email: data.email,
+        reason: "slot_full"
+      }
+    }]);
     return res.json({ status:'rejected', reason:'slot_full' });
   }
 
@@ -117,6 +201,13 @@ async function book(data, res) {
     calendarId,
     resource: event
   });
+  await supabase.from('stats').insert([{
+    business_id: businessId,
+    call_type: 'booking',
+    phone: data.phone,
+    appointment_id: inserted.data.id,
+    metadata: { name: data.name, email: data.email }
+  }]);
 
   return res.json({
     status: 'success',
@@ -130,43 +221,56 @@ async function book(data, res) {
     }
   });
 }
+}
 
-// CANCEL APPOINTMENT
+// Modified CANCEL function using Supabase to identify the appointment
 async function cancel(data, res) {
-  const { name, email, phone, calendarId } = data;
-  if (!name || (!email && !phone) || !calendarId) {
-    return res.json({ status:'error', message:'Missing credentials or calendarId' });
+  const { name, email, phone, calendarId, business_id } = data;
+  if (!name || (!email && !phone) || !calendarId || !business_id) {
+    return res.json({ status: 'error', message: 'Missing required fields' });
   }
 
-  const now = new Date();
-  const future = new Date(now.getTime() + 30*24*60*60000);
+  // Step 1: Find matching appointment from Supabase logs
+  const { data: matchingStats, error } = await supabase
+    .from('stats')
+    .select('appointment_id, metadata')
+    .eq('business_id', business_id)
+    .eq('call_type', 'booking')
+    .order('created_at', { ascending: false })
+    .limit(20);
 
-  const list = await calendar.events.list({
-    calendarId,
-    timeMin: now.toISOString(),
-    timeMax: future.toISOString(),
-    singleEvents: true
+  if (error || !matchingStats || matchingStats.length === 0) {
+    return res.json({ status: 'not_found', message: 'No recent appointments found' });
+  }
+
+  const match = matchingStats.find(entry => {
+    const meta = entry.metadata || {};
+    const nameMatch = (meta.name || '').toLowerCase() === name.toLowerCase();
+    const emailMatch = email ? (meta.email || '').toLowerCase() === email.toLowerCase() : true;
+    const phoneMatch = phone ? (data.phone === phone) : true;
+    return nameMatch && emailMatch && phoneMatch;
   });
 
-  const lower = name.toLowerCase();
-  for (let ev of list.data.items || []) {
-    if (!ev.summary.toLowerCase().includes(`(${lower})`)) continue;
-    const desc = (ev.description || '').toLowerCase();
-    if (email && !desc.includes(email.toLowerCase())) continue;
-    if (phone && !desc.includes(phone)) continue;
+  if (!match) {
+    return res.json({ status: 'not_found', message: 'No matching appointment' });
+  }
 
-    await calendar.events.delete({ calendarId, eventId: ev.id });
+  // Step 2: Delete the event using appointment_id
+  try {
+    await calendar.events.delete({ calendarId, eventId: match.appointment_id });
     return res.json({
       status: 'success',
       results: {
         status: 'cancelled',
-        data: { start: toLocalISOString(new Date(ev.start.dateTime)) }
+        data: { appointment_id: match.appointment_id }
       }
     });
+  } catch (err) {
+    console.error('Failed to delete calendar event:', err);
+    return res.json({ status: 'error', message: 'Failed to cancel appointment' });
   }
-
-  return res.json({ status:'not_found', message:'No matching appointment' });
 }
+
 
 // FIND NEAREST SLOT
 async function findNearest(data, res) {
