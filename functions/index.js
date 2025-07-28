@@ -3,10 +3,7 @@
 //  Updated to support agent-passed config variables
 // ===============================================
 const { createClient } = require('@supabase/supabase-js');
-const businessId = data.business_id; // coming from Synthflow
-if (!businessId) {
-  return res.status(400).json({ status: 'error', message: 'Missing business_id' });
-}
+
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY; // Use service role for server
 const supabase = createClient(supabaseUrl, supabaseKey);
@@ -37,6 +34,10 @@ app.use(cors());
 app.use(bodyParser.json());
 app.post('/onboard', async (req, res) => {
   const data = req.body;
+  const businessId = data.business_id; // coming from Synthflow
+    if (!businessId) {
+      return res.status(400).json({ status: 'error', message: 'Missing business_id' });
+    }
 
   const supabase = createClient(
     process.env.SUPABASE_URL,
