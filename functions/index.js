@@ -28,6 +28,10 @@ const auth = new google.auth.GoogleAuth({
   scopes: ['https://www.googleapis.com/auth/calendar']
 });
 const calendar = google.calendar({ version: 'v3', auth });
+
+const app = express();
+app.use(cors());
+app.use(bodyParser.json());
 app.post("/stats", async (req, res) => {
   const { business_id } = req.body;
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY); // use service key to bypass RLS safely
@@ -53,9 +57,6 @@ app.post("/stats", async (req, res) => {
     total_rejected,
   });
 });
-const app = express();
-app.use(cors());
-app.use(bodyParser.json());
 app.post('/onboard', async (req, res) => {
   const data = req.body;
   const businessId = data.business_id; // coming from Synthflow
