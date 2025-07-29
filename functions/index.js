@@ -34,7 +34,7 @@ app.use(cors());
 app.use(bodyParser.json());
 app.post("/stats", async (req, res) => {
   const { business_id } = req.body;
-  const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY); // use service key to bypass RLS safely
+  const supabase = createClient(supabaseUrl, supabaseKey); // use service key to bypass RLS safely
 
   const { data, error } = await supabase
     .from("stats")
