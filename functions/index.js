@@ -273,7 +273,7 @@ async function book(data, res) {
       start: start.toISOString(),
       end: end.toISOString(),
       appointment_type: appointmentType || "default"
-    }
+    } 
   }]);
 
 
