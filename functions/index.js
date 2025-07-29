@@ -256,6 +256,7 @@ async function book(data, res) {
     }]);
     return res.json({ status:'rejected', reason:'slot_full' });
   }
+}
   console.log("after calendar chack");
 
   const event = {
@@ -300,7 +301,7 @@ async function book(data, res) {
     }
   });
 }
-}
+
 
 // Modified CANCEL function using Supabase to identify the appointment
 async function cancel(data, res) {
