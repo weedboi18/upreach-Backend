@@ -155,8 +155,9 @@ function toLocalISOString(date) {
 // BOOK APPOINTMENT
 async function book(data, res) {
   console.log("got inside book");
-  const businessId = data.business_id;
+  
   const { name, email, phone, bookingTime, calendarId, blockingCalendarId, appointmentType } = data;
+  const businessId = data.business_id;
   console.log("extracted inputs");
   if (!name || !bookingTime || !calendarId) {
     return res.json({ status:'error', message:'Missing name, calendarId or bookingTime' });
