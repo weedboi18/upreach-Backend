@@ -34,7 +34,7 @@ app.use(cors());
 app.use(bodyParser.json());
 app.post("/stats", async (req, res) => {
   const { business_id } = req.body;
-  const supabase = createClient(supabaseUrl, supabaseKey); // use service key to bypass RLS safely
+  const supabase = createClient(supabaseUrl, supabaseKey);
 
   const { data, error } = await supabase
     .from("stats")
@@ -46,15 +46,33 @@ app.post("/stats", async (req, res) => {
     return res.status(500).json({ error: "Failed to fetch stats" });
   }
 
-  // Example aggregation
+  const now = DateTime.now();
   const total_calls = data.length;
-  const total_bookings = data.filter(row => row.call_type === "booked").length;
+  const total_bookings = data.filter(row => row.call_type === "booking").length;
   const total_rejected = data.filter(row => row.call_type === "rejected").length;
+
+  const daily = data.filter(row =>
+    row.call_type === "booking" &&
+    DateTime.fromISO(row.timestamp).diff(now, 'days').days >= -1
+  ).length;
+
+  const weekly = data.filter(row =>
+    row.call_type === "booking" &&
+    DateTime.fromISO(row.timestamp).diff(now, 'days').days >= -7
+  ).length;
+
+  const monthly = data.filter(row =>
+    row.call_type === "booking" &&
+    DateTime.fromISO(row.timestamp).diff(now, 'days').days >= -30
+  ).length;
 
   return res.json({
     total_calls,
     total_bookings,
     total_rejected,
+    daily_bookings: daily,
+    weekly_bookings: weekly,
+    monthly_bookings: monthly
   });
 });
 app.post('/onboard', async (req, res) => {
@@ -151,6 +169,21 @@ async function book(data, res) {
 
   const startLux = DateTime.fromISO(bookingTime, { zone: timezone });
   const endLux   = startLux.plus({ minutes: durationMin });
+  const now = DateTime.now().setZone(timezone);
+  const diffMinutes = startLux.diff(now, 'minutes').minutes;
+  if (diffMinutes < 30) {
+    await supabase.from('stats').insert([{
+      business_id: data.business_id,
+      call_type: 'rejected',
+      phone: data.phone,
+      metadata: {
+        name: data.name,
+        email: data.email,
+        reason: "too_soon"
+      }
+    }]);
+    return res.json({ status: 'rejected', reason: 'too_soon' });
+  }
   const h0 = startLux.hour, h1 = endLux.hour, m1 = endLux.minute;
 
   if (h0 < officeStart || h1 > officeEnd || (h1 === officeEnd && m1 > 0)) {
@@ -232,8 +265,17 @@ async function book(data, res) {
     call_type: 'booking',
     phone: data.phone,
     appointment_id: inserted.data.id,
-    metadata: { name: data.name, email: data.email }
+    metadata: {
+      name: data.name,
+      email: data.email,
+      phone: data.phone,
+      timezone: timezone,
+      start: start.toISOString(),
+      end: end.toISOString(),
+      appointment_type: appointmentType || "default"
+    }
   }]);
+
 
   return res.json({
     status: 'success',
@@ -283,6 +325,16 @@ async function cancel(data, res) {
 
   // Step 2: Delete the event using appointment_id
   try {
+    // Block cancellation if < 1hr before appointment
+    const startTimeISO = match.metadata?.start || null;
+    if (startTimeISO) {
+      const eventStart = DateTime.fromISO(startTimeISO);
+      const now = DateTime.now();
+      const minutesAway = eventStart.diff(now, 'minutes').minutes;
+      if (minutesAway < 60) {
+        return res.json({ status: 'rejected', reason: 'too_close_to_cancel' });
+      }
+    }
     await calendar.events.delete({ calendarId, eventId: match.appointment_id });
     return res.json({
       status: 'success',
