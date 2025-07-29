@@ -28,7 +28,31 @@ const auth = new google.auth.GoogleAuth({
   scopes: ['https://www.googleapis.com/auth/calendar']
 });
 const calendar = google.calendar({ version: 'v3', auth });
+app.post("/stats", async (req, res) => {
+  const { business_id } = req.body;
+  const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY); // use service key to bypass RLS safely
 
+  const { data, error } = await supabase
+    .from("stats")
+    .select("*")
+    .eq("business_id", business_id);
+
+  if (error) {
+    console.error("Supabase error:", error);
+    return res.status(500).json({ error: "Failed to fetch stats" });
+  }
+
+  // Example aggregation
+  const total_calls = data.length;
+  const total_bookings = data.filter(row => row.call_type === "booked").length;
+  const total_rejected = data.filter(row => row.call_type === "rejected").length;
+
+  return res.json({
+    total_calls,
+    total_bookings,
+    total_rejected,
+  });
+});
 const app = express();
 app.use(cors());
 app.use(bodyParser.json());
