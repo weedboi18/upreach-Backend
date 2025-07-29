@@ -154,14 +154,16 @@ function toLocalISOString(date) {
 
 // BOOK APPOINTMENT
 async function book(data, res) {
-
+  console.log("got inside book");
   const businessId = data.business_id;
   const { name, email, phone, bookingTime, calendarId, blockingCalendarId, appointmentType } = data;
+  console.log("extracted inputs");
   if (!name || !bookingTime || !calendarId) {
     return res.json({ status:'error', message:'Missing name, calendarId or bookingTime' });
   }
 
   const timezone    = data.timezone || DEFAULTS.timezone;
+  console.log("timezone:", timezone);
   const officeStart = data.officeStart ?? DEFAULTS.officeStart;
   const officeEnd   = data.officeEnd ?? DEFAULTS.officeEnd;
   const durationMin = (data.durationMin || DEFAULTS.durationMin);
@@ -209,15 +211,19 @@ async function book(data, res) {
   const end   = new Date(endLux.toUTC().toISO());
 
   const fb = await calendar.freebusy.query({
+    
     requestBody: {
       timeMin: start.toISOString(),
       timeMax: end.toISOString(),
       items: [
         { id: calendarId },
         { id: blockingId }
-      ]
+        ]
+      }
+      
     }
-  });
+  );
+  console.log("freebusy query complete");
 
   const busyBlock = fb.data.calendars[blockingId]?.busy || [];
   if (busyBlock.length > 0) {
@@ -262,6 +268,7 @@ async function book(data, res) {
     calendarId,
     resource: event
   });
+  console.log("moving onto booking");
   await supabase.from('stats').insert([{
     business_id: businessId,
     call_type: 'booking',
@@ -277,7 +284,7 @@ async function book(data, res) {
       appointment_type: appointmentType || "default"
     } 
   }]);
-
+  console.log("finished stats insert");
 
   return res.json({
     status: 'success',
