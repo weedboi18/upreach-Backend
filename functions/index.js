@@ -239,7 +239,7 @@ async function book(data, res) {
     }]);
     return res.json({ status:'rejected', reason:'slot_blocked' });
   }
-
+  console.log("after block check");
   const busyMain = fb.data.calendars[calendarId]?.busy || [];
   if (busyMain.length >= maxOverlaps) {
     if (busyBlock.length > 0) {
@@ -255,6 +255,7 @@ async function book(data, res) {
     }]);
     return res.json({ status:'rejected', reason:'slot_full' });
   }
+  console.log("after calendar chack");
 
   const event = {
     summary: `Appointment with (${name})`,
@@ -263,7 +264,7 @@ async function book(data, res) {
     end:         { dateTime: end.toISOString() },
     location:    `Phone: ${phone||''}`
   };
-
+  console.log("event created");
   const inserted = await calendar.events.insert({
     calendarId,
     resource: event
