@@ -154,6 +154,7 @@ function toLocalISOString(date) {
 
 // BOOK APPOINTMENT
 async function book(data, res) {
+  const businessId = data.business_id;
   const { name, email, phone, bookingTime, calendarId, blockingCalendarId, appointmentType } = data;
   if (!name || !bookingTime || !calendarId) {
     return res.json({ status:'error', message:'Missing name, calendarId or bookingTime' });
