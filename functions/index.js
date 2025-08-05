@@ -328,7 +328,7 @@ async function cancel(data, res) {
     const nameMatch = (meta.name || '').toLowerCase() === name.toLowerCase();
     const emailMatch = email ? (meta.email || '').toLowerCase() === email.toLowerCase() : true;
     const phoneMatch = phone ? (data.phone === phone) : true;
-    return nameMatch && emailMatch && phoneMatch;
+    return nameMatch && (emailMatch || phoneMatch);
   });
 
   if (!match) {
