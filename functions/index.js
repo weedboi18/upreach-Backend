@@ -158,9 +158,10 @@ async function book(data, res) {
   
   const { name, email, phone, bookingTime, calendarId, blockingCalendarId, appointmentType } = data;
   const businessId = data.business_id;
-  console.log("extracted inputs");
+  
+  console.log("extracted inputs", name, email, phone, bookingTime, calendarId, blockingCalendarId, appointmentType);
   if (!name || !bookingTime || !calendarId) {
-    return res.json({ status:'error', message:'Missing name, calendarId or bookingTime' });
+    return res.json({ status:'error', message:'Missing name, calendarId or bookingTime' });s
   }
 
   const timezone    = data.timezone || DEFAULTS.timezone;
