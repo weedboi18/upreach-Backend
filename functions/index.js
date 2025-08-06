@@ -321,6 +321,7 @@ async function cancel(data, res) {
     .limit(20);
 
   if (error || !matchingStats || matchingStats.length === 0) {
+    console.log(matchingStats, name, email, phone, calendarId, business_id)
     return res.json({ status: 'not_found', message: 'No recent appointments found' });
   }
 
