@@ -321,7 +321,7 @@ async function cancel(data, res) {
     .limit(20);
   const { data: allStats, error: debugError } = await supabase
   .from('stats')
-  .select('appointment_id, metadata');
+  .select('appointment_id, metadata, business_id');
 
 console.log("Supabase stats:", allStats);
 if (debugError) console.error("Supabase error:", debugError);
