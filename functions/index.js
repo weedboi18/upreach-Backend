@@ -319,12 +319,13 @@ async function cancel(data, res) {
     .eq('call_type', 'booking')
     .order('created_at', { ascending: false })
     .limit(20);
-  const { data, erro } = await supabase
-    .from('stats')
-    .select('appointment_id, metadata');
+  const { data: allStats, error: debugError } = await supabase
+  .from('stats')
+  .select('appointment_id, metadata');
 
-  console.log("Supabase stats:", data);
-  if (erro) console.error("Supabase error:", erro);
+console.log("Supabase stats:", allStats);
+if (debugError) console.error("Supabase error:", debugError);
+
 
   if (error || !matchingStats || matchingStats.length === 0) {
     console.log(matchingStats, name, email, phone, calendarId, business_id)
