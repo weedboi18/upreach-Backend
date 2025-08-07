@@ -310,15 +310,16 @@ async function cancel(data, res) {
   if (!name || (!email && !phone) || !calendarId || !business_id) {
     return res.json({ status: 'error', message: 'Missing required fields' });
   }
+  const nowISO = DateTime.now().toISO();
 
-  // Step 1: Find matching appointment from Supabase logs
   const { data: matchingStats, error } = await supabase
     .from('stats')
     .select('appointment_id, metadata')
     .eq('business_id', business_id)
     .eq('call_type', 'booking')
-    .order('created_at', { ascending: false })
-    .limit(20);
+    .gte('metadata->>start', nowISO)
+    .order('metadata->>start', { ascending: true })
+    .limit(10);
   const { data: allStats, error: debugError } = await supabase
   .from('stats')
   .select('appointment_id, metadata, business_id');
