@@ -307,9 +307,12 @@ async function book(data, res) {
 // Modified CANCEL function using Supabase to identify the appointment
 async function cancel(data, res) {
   const { name, email, phone, calendarId, business_id } = data;
+
   if (!name || (!email && !phone) || !calendarId || !business_id) {
     return res.json({ status: 'error', message: 'Missing required fields' });
   }
+
+  // Step 1: Find matching appointment from Supabase logs
   const nowISO = DateTime.now().toISO();
 
   const { data: matchingStats, error } = await supabase
@@ -320,24 +323,25 @@ async function cancel(data, res) {
     .gte('metadata->>start', nowISO)
     .order('metadata->>start', { ascending: true })
     .limit(10);
-  const { data: allStats, error: debugError } = await supabase
-  .from('stats')
-  .select('appointment_id, metadata, business_id');
-
-console.log("Supabase stats:", allStats);
-if (debugError) console.error("Supabase error:", debugError);
-
 
   if (error || !matchingStats || matchingStats.length === 0) {
-    console.log(matchingStats, name, email, phone, calendarId, business_id, error)
+    console.log(matchingStats, name, email, phone, calendarId, business_id, error);
     return res.json({ status: 'not_found', message: 'No recent appointments found' });
   }
 
+  // Step 2: Match based on (name AND (email OR phone))
   const match = matchingStats.find(entry => {
     const meta = entry.metadata || {};
     const nameMatch = (meta.name || '').toLowerCase() === name.toLowerCase();
-    const emailMatch = email ? (meta.email || '').toLowerCase() === email.toLowerCase() : true;
-    const phoneMatch = phone ? (data.phone === phone) : true;
+
+    const emailMatch = email && meta.email
+      ? meta.email.toLowerCase() === email.toLowerCase()
+      : false;
+
+    const phoneMatch = phone && meta.phone
+      ? meta.phone === phone
+      : false;
+
     return nameMatch && (emailMatch || phoneMatch);
   });
 
@@ -345,19 +349,21 @@ if (debugError) console.error("Supabase error:", debugError);
     return res.json({ status: 'not_found', message: 'No matching appointment' });
   }
 
-  // Step 2: Delete the event using appointment_id
+  // Step 3: Cancel only if >60 mins in advance
   try {
-    // Block cancellation if < 1hr before appointment
     const startTimeISO = match.metadata?.start || null;
     if (startTimeISO) {
       const eventStart = DateTime.fromISO(startTimeISO);
       const now = DateTime.now();
       const minutesAway = eventStart.diff(now, 'minutes').minutes;
+
       if (minutesAway < 60) {
         return res.json({ status: 'rejected', reason: 'too_close_to_cancel' });
       }
     }
+
     await calendar.events.delete({ calendarId, eventId: match.appointment_id });
+
     return res.json({
       status: 'success',
       results: {
@@ -365,11 +371,23 @@ if (debugError) console.error("Supabase error:", debugError);
         data: { appointment_id: match.appointment_id }
       }
     });
+
   } catch (err) {
+    if (err.code === 410) {
+      return res.json({
+        status: 'already_deleted',
+        results: {
+          status: 'gone',
+          message: 'The appointment was already deleted'
+        }
+      });
+    }
+
     console.error('Failed to delete calendar event:', err);
     return res.json({ status: 'error', message: 'Failed to cancel appointment' });
   }
 }
+
 
 
 // FIND NEAREST SLOT
