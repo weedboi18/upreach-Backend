@@ -323,9 +323,10 @@ async function cancel(data, res) {
     .gte('metadata->>start', nowISO)
     .order('metadata->>start', { ascending: true })
     .limit(10);
-
+  console.log(matchingStats, name, email, phone, calendarId, business_id, error);
+  console.log(metadata, business_id)
   if (error || !matchingStats || matchingStats.length === 0) {
-    console.log(matchingStats, name, email, phone, calendarId, business_id, error);
+    
     return res.json({ status: 'not_found', message: 'No recent appointments found' });
   }
 
