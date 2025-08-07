@@ -328,7 +328,7 @@ if (debugError) console.error("Supabase error:", debugError);
 
 
   if (error || !matchingStats || matchingStats.length === 0) {
-    console.log(matchingStats, name, email, phone, calendarId, business_id)
+    console.log(matchingStats, name, email, phone, calendarId, business_id, error)
     return res.json({ status: 'not_found', message: 'No recent appointments found' });
   }
 
