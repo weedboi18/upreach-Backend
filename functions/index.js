@@ -156,12 +156,12 @@ function toLocalISOString(date) {
 async function book(data, res) {
   console.log("got inside book");
   
-  const { name, email, phone, bookingTime, calendarId, blockingCalendarId, appointmentType } = data;
+  const { name, email, phone, bookingTime, calendarId, blockingCalendarId, appointmentType, specialNotes } = data;
   const businessId = data.business_id;
   
   console.log("extracted inputs", name, email, phone, bookingTime, calendarId, blockingCalendarId, appointmentType);
   if (!name || !bookingTime || !calendarId) {
-    return res.json({ status:'error', message:'Missing name, calendarId or bookingTime' });s
+    return res.json({ status:'error', message:'Missing name, calendarId or bookingTime' });
   }
 
   const timezone    = data.timezone || DEFAULTS.timezone;
@@ -205,26 +205,21 @@ async function book(data, res) {
     }]);
 
     return res.json({ status: 'rejected', reason: 'outside_office_hours' });
-    
-
   }
 
   const start = new Date(startLux.toUTC().toISO());
   const end   = new Date(endLux.toUTC().toISO());
 
   const fb = await calendar.freebusy.query({
-    
     requestBody: {
       timeMin: start.toISOString(),
       timeMax: end.toISOString(),
       items: [
         { id: calendarId },
         { id: blockingId }
-        ]
-      }
-      
+      ]
     }
-  );
+  });
   console.log("freebusy query complete");
 
   const busyBlock = fb.data.calendars[blockingId]?.busy || [];
@@ -245,27 +240,27 @@ async function book(data, res) {
   const busyMain = fb.data.calendars[calendarId]?.busy || [];
   if (busyMain.length >= maxOverlaps) {
     if (busyBlock.length > 0) {
-    await supabase.from('stats').insert([{
-      business_id: businessId,
-      call_type: 'rejected',
-      phone: data.phone,
-      metadata: {
-        name: data.name,
-        email: data.email,
-        reason: "slot_full"
-      }
-    }]);
-    return res.json({ status:'rejected', reason:'slot_full' });
+      await supabase.from('stats').insert([{
+        business_id: businessId,
+        call_type: 'rejected',
+        phone: data.phone,
+        metadata: {
+          name: data.name,
+          email: data.email,
+          reason: "slot_full"
+        }
+      }]);
+      return res.json({ status:'rejected', reason:'slot_full' });
+    }
   }
-}
   console.log("after calendar chack");
 
   const event = {
     summary: `Appointment with (${name})`,
-    description: `Email: ${email||'N/A'}\nPhone: ${phone||'N/A'}`,
+    description: `Email: ${email || 'N/A'}\nPhone: ${phone || 'N/A'}${specialNotes ? `\nNotes: ${specialNotes}` : ''}`,
     start:       { dateTime: start.toISOString() },
     end:         { dateTime: end.toISOString() },
-    location:    `Phone: ${phone||''}`
+    location:    `Phone: ${phone || ''}`
   };
   console.log("event created");
   const inserted = await calendar.events.insert({
@@ -302,6 +297,8 @@ async function book(data, res) {
     }
   });
 }
+
+
 
 
 // Modified CANCEL function using Supabase to identify the appointment
