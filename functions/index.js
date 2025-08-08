@@ -159,7 +159,7 @@ async function book(data, res) {
   const { name, email, phone, bookingTime, calendarId, blockingCalendarId, appointmentType, specialNotes } = data;
   const businessId = data.business_id;
   
-  console.log("extracted inputs", name, email, phone, bookingTime, calendarId, blockingCalendarId, appointmentType);
+  
   if (!name || !bookingTime || !calendarId) {
     return res.json({ status:'error', message:'Missing name, calendarId or bookingTime' });
   }
@@ -170,13 +170,14 @@ async function book(data, res) {
   const officeEnd   = data.officeEnd ?? DEFAULTS.officeEnd;
   const durationMin = (data.durationMin || DEFAULTS.durationMin);
   const maxOverlaps = (data.maxOverlaps || DEFAULTS.maxOverlaps);
-
+  
   const blockingId = blockingCalendarId || calendarId;
 
   const startLux = DateTime.fromISO(bookingTime, { zone: timezone });
   const endLux   = startLux.plus({ minutes: durationMin });
   const now = DateTime.now().setZone(timezone);
   const diffMinutes = startLux.diff(now, 'minutes').minutes;
+  console.log("extracted inputs", name, email, phone, bookingTime, calendarId, blockingCalendarId, appointmentType, specialNotes, durationMin, startLux, endLux);
   if (diffMinutes < 30) {
     await supabase.from('stats').insert([{
       business_id: data.business_id,
