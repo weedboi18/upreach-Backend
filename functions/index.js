@@ -169,6 +169,7 @@ async function book(data, res) {
   const officeStart = data.officeStart ?? DEFAULTS.officeStart;
   const officeEnd   = data.officeEnd ?? DEFAULTS.officeEnd;
   const durationMin = (data.durationMin || DEFAULTS.durationMin);
+  console.log("duration", durationMin)
   const maxOverlaps = (data.maxOverlaps || DEFAULTS.maxOverlaps);
   
   const blockingId = blockingCalendarId || calendarId;
