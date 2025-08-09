@@ -18,7 +18,7 @@ const DEFAULTS = {
   timezone: 'America/Vancouver',
   officeStart: 9,          // 9 AM
   officeEnd: 17,           // 5 PM
-  durationMin: 60,         // appointment length (min)
+  durationMin: 15,         // appointment length (min)
   maxOverlaps: 5           // max simultaneous events
 };
 
@@ -168,8 +168,10 @@ async function book(data, res) {
   console.log("timezone:", timezone);
   const officeStart = data.officeStart ?? DEFAULTS.officeStart;
   const officeEnd   = data.officeEnd ?? DEFAULTS.officeEnd;
-  const durationMin = (data.durationMin || DEFAULTS.durationMin);
-  if (durationMin === "<duration>") durationMin = 15;
+  let durationMin = parseInt(data.durationMin) || DEFAULTS.durationMin;
+  if (!durationMin || durationMin <= 0 || data.durationMin === "<duration>") {
+    durationMin = DEFAULTS.durationMin;
+  }
   console.log("duration", durationMin) 
   const maxOverlaps = (data.maxOverlaps || DEFAULTS.maxOverlaps);
   
