@@ -125,8 +125,6 @@ app.post('/onboard', async (req, res) => {
 // ==== deps at top of file (reuse your existing ones) ====
 
 
-const { createClient } = require('@supabase/supabase-js');
-
 
 
 
