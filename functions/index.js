@@ -17,7 +17,7 @@ const { DateTime } = require('luxon');
 const DEFAULTS = {
   timezone: 'America/Vancouver',
   officeStart: 9,          // 9 AM
-  officeEnd: 17,           // 5 PM
+  officeEnd: 17,           // 5 PM 
   durationMin: 15,         // appointment length (min)
   maxOverlaps: 5           // max simultaneous events
 };
@@ -123,11 +123,11 @@ app.post('/onboard', async (req, res) => {
   return res.json({ success: true, uid });
 });
 // ==== deps at top of file (reuse your existing ones) ====
-const express = require('express');
-const { DateTime } = require('luxon');
+
+
 const { createClient } = require('@supabase/supabase-js');
 
-  
+
 
 
 // TODO: wire to your existing Google Calendar helpers
