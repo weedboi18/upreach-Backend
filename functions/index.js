@@ -75,6 +75,60 @@ app.post("/stats", async (req, res) => {
     monthly_bookings: monthly
   });
 });
+// GET /inventory/models?business_id=...&activeOnly=true
+// Returns unique model names (e.g., ["Audi R8","Audi A8","Q5"])
+app.get("/inventory/models", async (req, res) => {
+  try {
+    const business_id = req.query.business_id;
+    const activeOnly  = (req.query.activeOnly ?? "true").toString().toLowerCase() === "true";
+
+    if (!business_id) {
+      return res.status(400).json({ ok: false, error: "Missing business_id" });
+    }
+
+    let q = supabase.from("cars").select("model").eq("business_id", business_id);
+    if (activeOnly) q = q.eq("is_active", true);
+
+    const { data, error } = await q;
+    if (error) return res.status(500).json({ ok: false, error: error.message });
+
+    const models = [...new Set((data || []).map(r => r.model).filter(Boolean))].sort((a,b) =>
+      a.localeCompare(b, undefined, { sensitivity: "base" })
+    );
+
+    return res.json({ ok: true, business_id, activeOnly, count: models.length, models });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ ok: false, error: "Server error" });
+  }
+});
+
+// (Optional) GET /inventory/cars?business_id=...&activeOnly=true
+// Returns individual units if you want finer control later.
+app.get("/inventory/cars", async (req, res) => {
+  try {
+    const business_id = req.query.business_id;
+    const activeOnly  = (req.query.activeOnly ?? "true").toString().toLowerCase() === "true";
+    if (!business_id) {
+      return res.status(400).json({ ok: false, error: "Missing business_id" });
+    }
+
+    let q = supabase
+      .from("cars")
+      .select("id, model, trim, vin, is_active")
+      .eq("business_id", business_id);
+
+    if (activeOnly) q = q.eq("is_active", true);
+
+    const { data, error } = await q;
+    if (error) return res.status(500).json({ ok: false, error: error.message });
+
+    return res.json({ ok: true, business_id, activeOnly, cars: data || [] });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ ok: false, error: "Server error" });
+  }
+});
 app.post('/onboard', async (req, res) => {
   const data = req.body;
   const businessId = data.business_id; // coming from Synthflow
