@@ -181,6 +181,7 @@ app.post('/onboard', async (req, res) => {
 // ===============================
 app.post("/testdrive", async (req, res) => {
   const data = req.body;
+
   try {
     const {
       name, email, phone,
@@ -190,38 +191,43 @@ app.post("/testdrive", async (req, res) => {
 
     const businessId  = data.business_id;
     const timezone    = data.timezone || DEFAULTS.timezone;
-    const officeStart = data.officeStart ?? DEFAULTS.officeStart;
-    const officeEnd   = data.officeEnd   ?? DEFAULTS.officeEnd;
+    const officeStart = data.officeStart ?? DEFAULTS.officeStart; // strings OK
+    const officeEnd   = data.officeEnd   ?? DEFAULTS.officeEnd;   // strings OK
     const maxOverlaps = data.maxOverlaps ?? DEFAULTS.maxOverlaps;
 
-    // Fixed slot duration for test drives
     const DURATION_MIN = DEFAULTS.testDriveDurationMin || DEFAULTS.durationMin || 30;
 
+    // Required inputs
     if (!name || !bookingTime || !calendarId || !businessId) {
-      return res.json({ status: "error", message: "Missing name, business_id, calendarId or bookingTime" });
+      return res.json({
+        status: "error",
+        message: "Missing name, business_id, calendarId or bookingTime"
+      });
     }
 
+    // Luxon time math in caller TZ
     const startLux = DateTime.fromISO(bookingTime, { zone: timezone });
     const endLux   = startLux.plus({ minutes: DURATION_MIN });
-    const now = DateTime.now().setZone(timezone);
-    const diffMinutes = startLux.diff(now, "minutes").minutes;
+    const now      = DateTime.now().setZone(timezone);
 
+    // Too soon (<30 min)
+    const diffMinutes = startLux.diff(now, "minutes").minutes;
     if (diffMinutes < 30) {
       return res.json({ status: "rejected", reason: "too_soon" });
     }
 
-    // Office hours check
-    const officeStartFloat = parseFloat(officeStart);
-    const officeEndFloat   = parseFloat(officeEnd);
+    // Office hours check (validation ONLY – not stored)
+    const officeStartFloat = parseFloat(officeStart); // e.g. "7.5" -> 7.5
+    const officeEndFloat   = parseFloat(officeEnd);   // e.g. "20"  -> 20
 
     const h0 = startLux.hour + startLux.minute / 60;
-    const h1 = endLux.hour + endLux.minute / 60;
+    const h1 = endLux.hour   + endLux.minute / 60;
 
     if (h0 < officeStartFloat || h1 > officeEndFloat) {
       return res.json({ status: "rejected", reason: "outside_office_hours" });
     }
 
-    // UTC conversion
+    // UTC conversion for Calendar API
     const start = new Date(startLux.toUTC().toISO());
     const end   = new Date(endLux.toUTC().toISO());
 
@@ -241,11 +247,12 @@ app.post("/testdrive", async (req, res) => {
     }
 
     const busyMain = fb.data.calendars[calendarId]?.busy || [];
-    if (busyMain.length >= maxOverlaps) {
+    const maxOverlapsNum = parseInt(maxOverlaps, 10) || DEFAULTS.maxOverlaps || 1;
+    if (busyMain.length >= maxOverlapsNum) {
       return res.json({ status: "rejected", reason: "slot_full" });
     }
 
-    // Calendar event
+    // Create calendar event
     const event = {
       summary: `Test Drive (${name})${model ? ` — ${model}` : ""}`,
       description: [
@@ -257,34 +264,36 @@ app.post("/testdrive", async (req, res) => {
       ].filter(Boolean).join("\n"),
       start: { dateTime: start.toISOString() },
       end:   { dateTime: end.toISOString() },
-      location: `Phone: ${phone || ""}`
+      location: phone ? `Phone: ${phone}` : undefined
     };
+
     const inserted = await calendar.events.insert({ calendarId, resource: event });
 
-    // Insert into appointments table
+    // ---- INSERT ONLY APPOINTMENT FIELDS (no officeStart/End/MaxOverlaps) ----
     const appt = {
       business_id: businessId,
-      name, email, phone,
+      name,
+      email: email || null,
+      phone: phone || null,
       model: model || null,
       car_unit_id: car_id || null,
       calendar_id: calendarId,
       blocking_calendar_id: blockingId,
-      timezone,
-      office_start: officeStart,
-      office_end: officeEnd,
-      max_overlaps: maxOverlaps,
-      booking_time_local: startLux.toISO(),
+      timezone,                               // keep if you want per-row tz
+      booking_time_local: startLux.toISO(),   // optional, nice to have
       starts_at: start.toISOString(),
       ends_at: end.toISOString(),
       call_type: "testdrive",
       source: "agent",
       special_notes: specialNotes || null,
-      gcal_event_id: inserted.data.id || null
+      gcal_event_id: inserted.data?.id || null
     };
 
-    const insAppt = await supabase.from("appointments").insert([appt]).select("id").single();
-    if (insAppt.error) {
-      console.error("appointments insert failed:", insAppt.error);
+    console.log("appointments insert payload:", appt);
+    const { error: apptErr } = await supabase.from("appointments").insert([appt]);
+    if (apptErr) {
+      console.error("appointments insert failed:", apptErr);
+      // Still return success if Calendar succeeded (optional):
       return res.json({ status: "error", message: "DB insert failed" });
     }
 
@@ -299,12 +308,12 @@ app.post("/testdrive", async (req, res) => {
         }
       }
     });
-
   } catch (e) {
     console.error("testdrive error", e);
     return res.json({ status: "error", message: "Unexpected server error" });
   }
 });
+
 
 
 // Route entry
