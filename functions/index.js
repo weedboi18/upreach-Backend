@@ -157,8 +157,13 @@ app.post("/testdrive", async (req, res) => {
     }
 
     // Office hours check
-    const h0 = startLux.hour, h1 = endLux.hour, m1 = endLux.minute;
-    if (h0 < officeStart || h1 > officeEnd || (h1 === officeEnd && m1 > 0)) {
+    const officeStartFloat = parseFloat(officeStart);
+    const officeEndFloat   = parseFloat(officeEnd);
+
+    const h0 = startLux.hour + startLux.minute / 60;
+    const h1 = endLux.hour + endLux.minute / 60;
+
+    if (h0 < officeStartFloat || h1 > officeEndFloat) {
       return res.json({ status: "rejected", reason: "outside_office_hours" });
     }
 
