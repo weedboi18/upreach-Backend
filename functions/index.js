@@ -179,6 +179,7 @@ app.post('/onboard', async (req, res) => {
 /// ===============================
 // POST /testdrive
 // ===============================
+// /testdrive — book a test drive without storing officeStart/End in DB
 app.post("/testdrive", async (req, res) => {
   const data = req.body;
 
@@ -186,52 +187,57 @@ app.post("/testdrive", async (req, res) => {
     const {
       name, email, phone,
       bookingTime, calendarId, blockingCalendarId,
-      specialNotes, model, car_id,
+      specialNotes, model
     } = data;
 
-    const businessId  = data.business_id;
-    const timezone    = data.timezone || DEFAULTS.timezone;
-    const officeStart = data.officeStart ?? DEFAULTS.officeStart; // strings OK
-    const officeEnd   = data.officeEnd   ?? DEFAULTS.officeEnd;   // strings OK
-    const maxOverlaps = data.maxOverlaps ?? DEFAULTS.maxOverlaps;
-
-    const DURATION_MIN = DEFAULTS.testDriveDurationMin || DEFAULTS.durationMin || 30;
-
-    // Required inputs
+    // REQUIRED inputs
+    const businessId  = data.business_id; // TEXT (your human code, e.g. '123abc')
     if (!name || !bookingTime || !calendarId || !businessId) {
-      return res.json({
-        status: "error",
-        message: "Missing name, business_id, calendarId or bookingTime"
-      });
+      return res.status(400).json({ status: "error", message: "missing_fields" });
     }
 
-    // Luxon time math in caller TZ
+    // Config / Defaults
+    const DEFAULTS = {
+      timezone: "America/Chicago",
+      officeStart: 7.5,          // 7:30
+      officeEnd: 20,             // 20:00
+      testDriveDurationMin: 30,
+      maxOverlaps: 3             // advisory for GCal only
+    };
+    const timezone    = data.timezone || DEFAULTS.timezone;
+    const officeStart = data.officeStart ?? DEFAULTS.officeStart;
+    const officeEnd   = data.officeEnd   ?? DEFAULTS.officeEnd;
+    const maxOverlaps = data.maxOverlaps ?? DEFAULTS.maxOverlaps;
+    const DURATION_MIN = DEFAULTS.testDriveDurationMin;
+
+    // Time handling (Luxon)
     const startLux = DateTime.fromISO(bookingTime, { zone: timezone });
+    if (!startLux.isValid) {
+      return res.status(400).json({ status: "error", message: "invalid_booking_time" });
+    }
     const endLux   = startLux.plus({ minutes: DURATION_MIN });
-    const now      = DateTime.now().setZone(timezone);
+    const nowLux   = DateTime.now().setZone(timezone);
 
     // Too soon (<30 min)
-    const diffMinutes = startLux.diff(now, "minutes").minutes;
+    const diffMinutes = startLux.diff(nowLux, "minutes").minutes;
     if (diffMinutes < 30) {
-      return res.json({ status: "rejected", reason: "too_soon" });
+      return res.status(409).json({ status: "rejected", reason: "too_soon" });
     }
 
-    // Office hours check (validation ONLY – not stored)
-    const officeStartFloat = parseFloat(officeStart); // e.g. "7.5" -> 7.5
-    const officeEndFloat   = parseFloat(officeEnd);   // e.g. "20"  -> 20
-
+    // Office hours validation (advisory)
     const h0 = startLux.hour + startLux.minute / 60;
     const h1 = endLux.hour   + endLux.minute / 60;
-
+    const officeStartFloat = parseFloat(String(officeStart));
+    const officeEndFloat   = parseFloat(String(officeEnd));
     if (h0 < officeStartFloat || h1 > officeEndFloat) {
-      return res.json({ status: "rejected", reason: "outside_office_hours" });
+      return res.status(409).json({ status: "rejected", reason: "outside_office_hours" });
     }
 
-    // UTC conversion for Calendar API
+    // Canonical UTC for DB + GCal
     const start = new Date(startLux.toUTC().toISO());
     const end   = new Date(endLux.toUTC().toISO());
 
-    // Freebusy check
+    // GCal freebusy (advisory)
     const blockingId = blockingCalendarId || calendarId;
     const fb = await calendar.freebusy.query({
       requestBody: {
@@ -239,99 +245,153 @@ app.post("/testdrive", async (req, res) => {
         timeMax: end.toISOString(),
         items: [{ id: calendarId }, { id: blockingId }]
       }
-    });
+    }).then(r => r.data);
 
-    const busyBlock = fb.data.calendars[blockingId]?.busy || [];
+    const busyBlock = fb.calendars?.[blockingId]?.busy || [];
     if (busyBlock.length > 0) {
-      return res.json({ status: "rejected", reason: "slot_blocked" });
+      return res.status(409).json({ status: "rejected", reason: "slot_blocked" });
     }
 
-    const busyMain = fb.data.calendars[calendarId]?.busy || [];
-    const maxOverlapsNum = parseInt(maxOverlaps, 10) || DEFAULTS.maxOverlaps || 1;
+    const busyMain = fb.calendars?.[calendarId]?.busy || [];
+    const maxOverlapsNum = parseInt(maxOverlaps, 10) || DEFAULTS.maxOverlaps;
     if (busyMain.length >= maxOverlapsNum) {
-      return res.json({ status: "rejected", reason: "slot_full" });
+      return res.status(409).json({ status: "rejected", reason: "slot_full" });
     }
 
-    // Create calendar event
+    // Choose/allocate unit
+    // A) current method: RPC picks a free car (non-atomic, but DB exclusion guard protects final insert)
+    //    If your RPC returns a TEXT car_id (uuid as string), keep as-is.
+    let chosenCarId = null;
+    if (!model) {
+      // If you want to require a model for test drives, enforce here:
+      // return res.status(400).json({ status:"error", message:"model_required_for_testdrive" });
+    } else {
+      const { data: rpcData, error: rpcErr } = await supabase.rpc("pick_free_car", {
+        p_business_id: businessId,
+        p_model: model,
+        p_start: start.toISOString(),
+        p_end:   end.toISOString()
+      });
+      if (rpcErr) {
+        console.error("pick_free_car RPC error:", rpcErr);
+        return res.status(500).json({ status: "error", message: "car_allocation_failed" });
+      }
+      if (!rpcData) {
+        return res.status(409).json({ status: "rejected", reason: "no_unit_available" });
+      }
+      chosenCarId = rpcData; // text uuid or whatever your RPC returns
+    }
+
+    // Idempotency key (prevents duplicate rows on retries)
+    const idem = [
+      businessId,
+      'testdrive',
+      start.toISOString(),
+      (name || '').trim().toLowerCase()
+    ].join('|');
+
+    // Insert appointment first (DB = source of truth)
+    const insertPayload = {
+      idem_key: idem,
+      business_id: businessId,               // TEXT
+      name,
+      email: email?.trim()?.toLowerCase() || null,
+      phone: phone || null,
+      model: model || null,
+      car_unit_id: chosenCarId || null,      // TEXT
+      calendar_id: calendarId,
+      blocking_calendar_id: blockingId,
+      timezone,
+      booking_time_local: startLux.toISO(),
+      starts_at: start.toISOString(),
+      ends_at: end.toISOString(),
+      call_type: "testdrive",
+      status: "booked",
+      source: "agent",
+      special_notes: specialNotes || null,
+      gcal_event_id: null
+    };
+
+    // Upsert on idem_key so retries don't double-book
+    const ins = await supabase
+      .from("appointments")
+      .upsert([insertPayload], { onConflict: 'idem_key' })
+      .select("id, car_unit_id, starts_at, ends_at")
+      .single();
+
+    if (ins.error) {
+      // If this is an overlap, Postgres throws 23P01; Supabase surfaces it as error with code
+      if (ins.error.code === '23P01') {
+        return res.status(409).json({ status: "rejected", reason: "overlap" });
+      }
+      console.error("appointments upsert failed:", ins.error);
+      return res.status(500).json({ status: "error", message: "db_upsert_failed" });
+    }
+
+    const apptId = ins.data.id;
+
+    // Create GCal event AFTER DB insert
     const event = {
       summary: `Test Drive (${name})${model ? ` — ${model}` : ""}`,
       description: [
         `Email: ${email || "N/A"}`,
         `Phone: ${phone || "N/A"}`,
         model ? `Model: ${model}` : null,
-        car_id ? `Unit: ${car_id}` : null,
+        chosenCarId ? `Unit: ${chosenCarId}` : null,
         specialNotes ? `Notes: ${specialNotes}` : null
       ].filter(Boolean).join("\n"),
       start: { dateTime: start.toISOString() },
-      end:   { dateTime: end.toISOString() },
-      location: phone ? `Phone: ${phone}` : undefined
+      end:   { dateTime: end.toISOString() }
     };
 
-    const inserted = await calendar.events.insert({ calendarId, resource: event });
-
-    // ---- INSERT ONLY APPOINTMENT FIELDS (no officeStart/End/MaxOverlaps) ----
-    const appt = {
-      business_id: businessId,
-      name,
-      email: email || null,
-      phone: phone || null,
-      model: model || null,
-      car_unit_id: car_id || null,
-      calendar_id: calendarId,
-      blocking_calendar_id: blockingId,
-      timezone,                               // keep if you want per-row tz
-      booking_time_local: startLux.toISO(),   // optional, nice to have
-      starts_at: start.toISOString(),
-      ends_at: end.toISOString(),
-      call_type: "testdrive",
-      source: "agent",
-      special_notes: specialNotes || null,
-      gcal_event_id: inserted.data?.id || null
-    };
-
-    console.log("appointments insert payload:", appt);
-    const { error: apptErr } = await supabase.from("appointments").insert([appt]);
-    if (apptErr) {
-      console.error("appointments insert failed:", apptErr);
-      // Still return success if Calendar succeeded (optional):
-      return res.json({ status: "error", message: "DB insert failed" });
+    let insertedEvent;
+    try {
+      insertedEvent = await calendar.events.insert({ calendarId, requestBody: event });
+    } catch (calErr) {
+      console.error("calendar insert failed, rolling back appointment:", calErr);
+      // Best-effort rollback (keeps calendars and DB consistent)
+      await supabase.from("appointments").delete().eq("id", apptId);
+      return res.status(502).json({ status: "error", message: "calendar_insert_failed" });
     }
 
-    return res.json({
+    const gcalId = insertedEvent?.data?.id || null;
+    if (gcalId) {
+      await supabase.from("appointments")
+        .update({ gcal_event_id: gcalId })
+        .eq("id", apptId);
+    }
+
+    // TODO: fire SMS confirmation here (post-commit), best-effort
+
+    return res.status(201).json({
       status: "success",
       results: {
         status: "booked",
         data: {
-          eventId: inserted.data.id,
-          start: toLocalISOString(start),
-          end:   toLocalISOString(end)
+          appointmentId: apptId,
+          eventId: gcalId,
+          start: toLocalISOString(start, timezone),
+          end:   toLocalISOString(end, timezone)
         }
       }
     });
+
   } catch (e) {
-    console.error("testdrive error", e);
-    return res.json({ status: "error", message: "Unexpected server error" });
+    // If Postgres exclusion hit here, it will have code 23P01
+    if (e && e.code === '23P01') {
+      return res.status(409).json({ status: "rejected", reason: "overlap" });
+    }
+    console.error("testdrive unexpected error", e);
+    return res.status(500).json({ status: "error", message: "server_error" });
   }
 });
 
+// Minimal helper if you don't already have it
+function toLocalISOString(dateObj, tz = "America/Chicago") {
+  const { DateTime } = require('luxon');
+  return DateTime.fromJSDate(dateObj, { zone: 'utc' }).setZone(tz).toISO();
+}
 
-
-// Route entry
-app.post('/action', async (req, res) => {
-  const data   = req.body;
-  const action = (data.action || '').toLowerCase();
-
-  try {
-    if (action === 'book')       return book(data, res);
-    if (action === 'cancel')     return cancel(data, res);
-    if (action === 'findnearest') return findNearest(data, res);
-
-    return res.json({ status:'error', message:`Unknown action "${data.action}"` });
-  } catch (err) {
-    console.error(err);
-    return res.json({ status:'error', message:err.message });
-  }
-});
 
 // Format UTC date to ISO string with local offset
 function toLocalISOString(date) {
