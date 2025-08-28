@@ -2,34 +2,36 @@
 //  Google Calendar Automation Backend (v2)
 //  Updated to support agent-passed config variables
 // ===============================================
-// === imports (one time only) ===
-const express = require('express');
-const cors = require('cors');
 const { createClient } = require('@supabase/supabase-js');
+
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY; // Use service role for server
+const supabase = createClient(supabaseUrl, supabaseKey);
 const { google } = require('googleapis');
+const express    = require('express');
+const bodyParser = require('body-parser');
+const cors       = require('cors');
 const { DateTime } = require('luxon');
 
-// === app init (must be before any app.use / routes) ===
-const app = express();
-app.use(express.json());
+// Default fallback config (used if not provided by agent)
+const DEFAULTS = {
+  timezone: 'America/Vancouver',
+  officeStart: 9,          // 9 AM
+  officeEnd: 17,           // 5 PM 
+  durationMin: 15,         // appointment length (min)
+  maxOverlaps: 5           // max simultaneous events
+};
 
-// === CORS (single place, above your routes) ===
-app.use(cors({
-  origin: true, // or ["https://studio.elevenlabs.io"]
-  methods: ['GET','POST','PUT','DELETE','OPTIONS'],
-  allowedHeaders: ['Content-Type','Authorization'],
-}));
-app.options('*', cors());
-
-// (optional) request logger
-app.use((req,res,next)=>{
-  console.log(new Date().toISOString(), req.method, req.originalUrl);
-  next();
+// Google Auth
+const auth = new google.auth.GoogleAuth({
+  keyFile: '/etc/secrets/upreach-key.json',
+  scopes: ['https://www.googleapis.com/auth/calendar']
 });
+const calendar = google.calendar({ version: 'v3', auth });
 
-// === your existing setup continues below ===
-// env vars, Supabase client, Google auth, and ALL your existing routes…
-
+const app = express();
+app.use(cors());
+app.use(bodyParser.json());
 app.post("/stats", async (req, res) => {
   const { business_id } = req.body;
   const supabase = createClient(supabaseUrl, supabaseKey);
@@ -111,7 +113,6 @@ const reqId = () => {
 app.get("/inventory/cars", async (req, res) => {
   const rid = reqId();
   const startedAt = Date.now();
-  console.log("we got into get \n\n\n")
 
   try {
     // --- Parse & log inputs
