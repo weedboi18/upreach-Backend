@@ -3,7 +3,6 @@
 //  Updated to support agent-passed config variables
 // ===============================================
 const { createClient } = require('@supabase/supabase-js');
-
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY; // Use service role for server
 const supabase = createClient(supabaseUrl, supabaseKey);
@@ -30,6 +29,8 @@ const auth = new google.auth.GoogleAuth({
 const calendar = google.calendar({ version: 'v3', auth });
 
 const app = express();
+app.use((req,res,next)=>{ console.log(new Date().toISOString(), req.method, req.originalUrl); next(); });
+
 app.use(cors());
 app.use(bodyParser.json());
 app.post("/stats", async (req, res) => {
