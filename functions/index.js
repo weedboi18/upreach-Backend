@@ -113,6 +113,7 @@ const reqId = () => {
 app.get("/inventory/cars", async (req, res) => {
   const rid = reqId();
   const startedAt = Date.now();
+  console.log("we got into get \n\n\n")
 
   try {
     // --- Parse & log inputs
@@ -264,7 +265,9 @@ app.post("/testdrive", async (req, res) => {
     const {
       name, email, phone,
       bookingTime, calendarId, blockingCalendarId,
-      specialNotes, model
+      specialNotes, model,
+      trim,               // <— NEW (optional)
+      requireExactTrim    // <— NEW (optional boolean)
     } = data;
 
     const businessId = data.business_id;
@@ -289,7 +292,7 @@ app.post("/testdrive", async (req, res) => {
     const maxOverlaps = data.maxOverlaps ?? DEFAULTS.maxOverlaps;
     const DURATION_MIN = DEFAULTS.testDriveDurationMin;
 
-    console.log("[testdrive] start", { businessId, model, bookingTime, timezone });
+    console.log("[testdrive] start", { businessId, model, trim, requireExactTrim: !!requireExactTrim, bookingTime, timezone });
 
     // ---- time handling
     const startLux = DateTime.fromISO(bookingTime, { zone: timezone });
@@ -371,20 +374,31 @@ app.post("/testdrive", async (req, res) => {
       }
     }
 
-    // ---- pick free unit
+    // ---- pick free unit (now honoring exact-trim if required)
     let chosenCarId = null;
     if (model) {
       const { data: rpcData, error: rpcErr } = await supabase.rpc("pick_free_car", {
         p_business_id: businessId,
         p_model: model,
         p_start: start.toISOString(),
-        p_end:   end.toISOString()
+        p_end:   end.toISOString(),
+        p_trim:  trim || null,
+        p_require_exact_trim: !!requireExactTrim
       });
       if (rpcErr) {
         console.error("[testdrive] pick_free_car error", rpcErr);
         return res.status(500).json({ status: "error", message: "car_allocation_failed" });
       }
       if (!rpcData) {
+        if (requireExactTrim && trim) {
+          console.info("[testdrive] rejected exact_trim_unavailable", { model, trim });
+          return res.status(409).json({
+            status: "rejected",
+            reason: "exact_trim_unavailable",
+            model,
+            trim
+          });
+        }
         console.info("[testdrive] rejected no_unit_available", { model });
         return res.status(409).json({ status: "rejected", reason: "no_unit_available" });
       }
@@ -404,6 +418,8 @@ app.post("/testdrive", async (req, res) => {
       email: email?.trim()?.toLowerCase() || null,
       phone: phone || null,
       model: model || null,
+      preferred_trim: trim || null,                 // <— NEW (persist caller intent)
+      require_exact_trim: !!requireExactTrim,       // <— NEW
       car_unit_id: chosenCarId || null,
       calendar_id: calendarId,
       blocking_calendar_id: blockingId,
@@ -443,6 +459,7 @@ app.post("/testdrive", async (req, res) => {
         `Email: ${email || "N/A"}`,
         `Phone: ${phone || "N/A"}`,
         model ? `Model: ${model}` : null,
+        trim ? `Requested Trim: ${trim}${requireExactTrim ? " (required)" : ""}` : null, // <— NEW
         chosenCarId ? `Unit: ${chosenCarId}` : null,
         specialNotes ? `Notes: ${specialNotes}` : null
       ].filter(Boolean).join("\n"),
