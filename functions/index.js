@@ -3,6 +3,23 @@
 //  Updated to support agent-passed config variables
 // ===============================================
 const { createClient } = require('@supabase/supabase-js');
+const cors = require("cors");
+
+// allow browser (ElevenLabs web preview) to call your API
+app.use(cors({
+  origin: true,                            // or ["https://studio.elevenlabs.io"]
+  methods: ["GET","POST","PUT","DELETE","OPTIONS"],
+  allowedHeaders: ["Content-Type","Authorization"],
+}));
+
+// answer preflight for all routes
+app.options("*", cors());
+
+// (optional) quick logger so you can SEE the preflight + GET
+app.use((req,res,next)=>{
+  console.log(new Date().toISOString(), req.method, req.originalUrl);
+  next();
+});
 
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY; // Use service role for server
