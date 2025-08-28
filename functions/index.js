@@ -111,6 +111,7 @@ const reqId = () => {
 };
 
 app.get("/inventory/cars", async (req, res) => {
+  console.log("fhjhfidshgfdshgifdshgsghorahgiahjfdhgfdsghiehfdshfjidsajfidsahgiagjifdhoiah")
   const rid = reqId();
   const startedAt = Date.now();
 
